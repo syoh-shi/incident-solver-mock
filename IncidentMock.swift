@@ -34,15 +34,21 @@ struct IncidentEvent: Identifiable, Hashable {
     }
 }
 
-enum OverlayMode: Equatable {
-    case actionA(IncidentEvent)
-    case actionB(IncidentEvent)
+private enum ActionPage: Hashable {
+    case actionA
+    case actionB
+}
+
+private struct ActionPagerContext: Identifiable, Equatable {
+    let id = UUID()
+    let event: IncidentEvent
+    var selection: ActionPage
 }
 
 struct IncidentMockView: View {
     @Environment(\.openURL) private var openURL
 
-    @State private var overlay: OverlayMode? = nil
+    @State private var pagerContext: ActionPagerContext? = nil
 
     private let locationLabel = "現在地：新宿駅（仮）"
     private let items: [IncidentEvent] = [
@@ -62,9 +68,9 @@ struct IncidentMockView: View {
                     VStack(spacing: 12) {
                         ForEach(items) { event in
                             SwipeableIncidentCard(event: event) {
-                                overlay = .actionA(event)
+                                pagerContext = .init(event: event, selection: .actionA)
                             } onSwipeRight: {
-                                overlay = .actionB(event)
+                                pagerContext = .init(event: event, selection: .actionB)
                             }
                         }
                     }
@@ -73,12 +79,9 @@ struct IncidentMockView: View {
             }
             .padding(16)
 
-            if let overlay {
-                overlayView(for: overlay)
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
-            }
+            fullScreenPager
         }
-        .animation(.spring(response: 0.28, dampingFraction: 0.86), value: overlay != nil)
+        .animation(.spring(response: 0.28, dampingFraction: 0.86), value: pagerContext != nil)
     }
 
     private var header: some View {
@@ -100,21 +103,16 @@ struct IncidentMockView: View {
     }
 
     @ViewBuilder
-    private func overlayView(for mode: OverlayMode) -> some View {
-        switch mode {
-        case .actionA(let event):
-            ActionAOverlay(
-                event: event,
-                onClose: { overlay = nil },
+    private var fullScreenPager: some View {
+        if let context = pagerContext {
+            ActionPagerView(
+                context: context,
+                onClose: { pagerContext = nil },
                 onOpenYahoo: { openURL(URL(string: "https://example.com/yahoo")!) },
                 onOpenMaps: { openURL(URL(string: "https://example.com/maps")!) }
             )
-
-        case .actionB(let event):
-            ActionBOverlay(
-                event: event,
-                onClose: { overlay = nil }
-            )
+            .transition(.opacity)
+            .zIndex(1)
         }
     }
 }
@@ -227,24 +225,84 @@ private struct SwipeableIncidentCard: View {
     }
 }
 
-// MARK: - Overlay A
+// MARK: - Action pager
 
-private struct ActionAOverlay: View {
-    let event: IncidentEvent
+private struct ActionPagerView: View {
+    let context: ActionPagerContext
     let onClose: () -> Void
     let onOpenYahoo: () -> Void
     let onOpenMaps: () -> Void
 
-    var body: some View {
-        ZStack {
-            Color.black.opacity(0.38)
-                .ignoresSafeArea()
-                .onTapGesture { onClose() }
+    @State private var selection: ActionPage
 
-            VStack(spacing: 14) {
+    init(context: ActionPagerContext, onClose: @escaping () -> Void, onOpenYahoo: @escaping () -> Void, onOpenMaps: @escaping () -> Void) {
+        self.context = context
+        self.onClose = onClose
+        self.onOpenYahoo = onOpenYahoo
+        self.onOpenMaps = onOpenMaps
+        _selection = State(initialValue: context.selection)
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .topTrailing) {
+                Color(.systemBackground)
+                    .ignoresSafeArea()
+
+                pager(size: geo.size)
+
+                closeButton
+                    .padding(.top, 20)
+                    .padding(.trailing, 20)
+            }
+        }
+    }
+
+    private var closeButton: some View {
+        Button(action: onClose) {
+            Image(systemName: "xmark")
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(.primary)
+                .padding(12)
+                .background(
+                    Circle()
+                        .fill(Color(.systemGray6))
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func pager(size: CGSize) -> some View {
+        TabView(selection: $selection) {
+            ActionAScreen(event: context.event, onOpenYahoo: onOpenYahoo, onOpenMaps: onOpenMaps)
+                .frame(width: size.height, height: size.width)
+                .rotationEffect(.degrees(90))
+                .tag(ActionPage.actionA)
+
+            ActionBScreen(event: context.event)
+                .frame(width: size.height, height: size.width)
+                .rotationEffect(.degrees(90))
+                .tag(ActionPage.actionB)
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .rotationEffect(.degrees(-90))
+        .frame(width: size.width, height: size.height)
+    }
+}
+
+// MARK: - Action A screen
+
+private struct ActionAScreen: View {
+    let event: IncidentEvent
+    let onOpenYahoo: () -> Void
+    let onOpenMaps: () -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("代替手段を探す")
-                        .font(.title3)
+                        .font(.title2.weight(.semibold))
                         .foregroundStyle(.primary)
 
                     Text("\(event.lineName)（\(event.section)）に異常が発生しています")
@@ -253,7 +311,7 @@ private struct ActionAOverlay: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                VStack(spacing: 10) {
+                VStack(spacing: 12) {
                     PrimaryButton(title: "Yahoo!乗換案内で開く", systemImage: "arrow.up.right.square") {
                         onOpenYahoo()
                     }
@@ -263,31 +321,41 @@ private struct ActionAOverlay: View {
                     }
                 }
 
-                HStack {
-                    Spacer()
-                    Button("閉じる") { onClose() }
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                }
+                infoCard
             }
-            .padding(16)
-            .frame(maxWidth: 520)
-            .background(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(Color(.systemBackground))
-            )
-            .shadow(color: Color.black.opacity(0.18), radius: 18, x: 0, y: 10)
             .padding(20)
-            .onTapGesture { }
         }
+        .background(Color(.systemBackground))
+    }
+
+    private var infoCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("スワイプで他の提案を見る")
+                .font(.headline)
+                .foregroundStyle(.primary)
+
+            Text("上方向へのスワイプで、周辺で時間を使うプランに切り替えられます。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Divider()
+
+            Label("地図や乗換案内を開いてルートを確認", systemImage: "map")
+                .font(.subheadline)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Color(.systemGray6))
+        )
     }
 }
 
-// MARK: - Overlay B
+// MARK: - Action B screen
 
-private struct ActionBOverlay: View {
+private struct ActionBScreen: View {
     let event: IncidentEvent
-    let onClose: () -> Void
 
     private let options: [(String, String)] = [
         ("カフェ", "cup.and.saucer"),
@@ -297,48 +365,38 @@ private struct ActionBOverlay: View {
     ]
 
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.38)
-                .ignoresSafeArea()
-                .onTapGesture { onClose() }
+        ScrollView {
+            VStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("周辺で時間を使う")
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(.primary)
 
-            VStack(spacing: 14) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("周辺で時間を使う")
-                            .font(.title3)
-                            .foregroundStyle(.primary)
-
-                        Text("\(event.lineName)（\(event.section)）")
-                            .font(.body)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Spacer()
-
-                    Button("閉じる") { onClose() }
+                    Text("\(event.lineName)（\(event.section)）の復旧を待っている間におすすめのスポットを表示します。")
                         .font(.body)
                         .foregroundStyle(.secondary)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                HStack(spacing: 12) {
-                    optionsGrid
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                optionsGrid
 
-                    mockImpactMap(statusColor: event.status.accent)
-                        .frame(width: 220, height: 220)
+                mockImpactMap(statusColor: event.status.accent)
+                    .frame(height: 240)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("スワイプで切り替え")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+
+                    Text("上下にスワイプすると代替手段の提案と切り替えられます。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(16)
-            .frame(maxWidth: 640)
-            .background(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(Color(.systemBackground))
-            )
-            .shadow(color: Color.black.opacity(0.18), radius: 18, x: 0, y: 10)
             .padding(20)
-            .onTapGesture { }
         }
+        .background(Color(.systemBackground))
     }
 
     private var optionsGrid: some View {
