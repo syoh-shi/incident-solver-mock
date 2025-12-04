@@ -34,9 +34,22 @@ struct IncidentEvent: Identifiable, Hashable {
     }
 }
 
-enum OverlayMode: Equatable {
+enum OverlayMode: Equatable, Hashable, Identifiable {
     case actionA(IncidentEvent)
     case actionB(IncidentEvent)
+
+    var id: String {
+        switch self {
+        case .actionA(let event): return "actionA-\(event.id)"
+        case .actionB(let event): return "actionB-\(event.id)"
+        }
+    }
+
+    var event: IncidentEvent {
+        switch self {
+        case .actionA(let event), .actionB(let event): return event
+        }
+    }
 }
 
 struct IncidentMockView: View {
@@ -73,9 +86,10 @@ struct IncidentMockView: View {
             }
             .padding(16)
 
-            if let overlay {
-                overlayView(for: overlay)
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            FullScreenPager(mode: $overlay) { mode in
+                overlay = mode
+            } content: { mode in
+                overlayContent(for: mode)
             }
         }
         .animation(.spring(response: 0.28, dampingFraction: 0.86), value: overlay != nil)
@@ -100,21 +114,17 @@ struct IncidentMockView: View {
     }
 
     @ViewBuilder
-    private func overlayView(for mode: OverlayMode) -> some View {
+    private func overlayContent(for mode: OverlayMode) -> some View {
         switch mode {
         case .actionA(let event):
-            ActionAOverlay(
+            ActionAScreen(
                 event: event,
-                onClose: { overlay = nil },
                 onOpenYahoo: { openURL(URL(string: "https://example.com/yahoo")!) },
                 onOpenMaps: { openURL(URL(string: "https://example.com/maps")!) }
             )
 
         case .actionB(let event):
-            ActionBOverlay(
-                event: event,
-                onClose: { overlay = nil }
-            )
+            ActionBScreen(event: event)
         }
     }
 }
@@ -229,19 +239,14 @@ private struct SwipeableIncidentCard: View {
 
 // MARK: - Overlay A
 
-private struct ActionAOverlay: View {
+private struct ActionAScreen: View {
     let event: IncidentEvent
-    let onClose: () -> Void
     let onOpenYahoo: () -> Void
     let onOpenMaps: () -> Void
 
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.38)
-                .ignoresSafeArea()
-                .onTapGesture { onClose() }
-
-            VStack(spacing: 14) {
+        ScrollView {
+            VStack(spacing: 18) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("代替手段を探す")
                         .font(.title3)
@@ -253,7 +258,7 @@ private struct ActionAOverlay: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                VStack(spacing: 10) {
+                VStack(spacing: 12) {
                     PrimaryButton(title: "Yahoo!乗換案内で開く", systemImage: "arrow.up.right.square") {
                         onOpenYahoo()
                     }
@@ -262,32 +267,24 @@ private struct ActionAOverlay: View {
                         onOpenMaps()
                     }
                 }
-
-                HStack {
-                    Spacer()
-                    Button("閉じる") { onClose() }
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                }
             }
-            .padding(16)
-            .frame(maxWidth: 520)
-            .background(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(Color(.systemBackground))
-            )
-            .shadow(color: Color.black.opacity(0.18), radius: 18, x: 0, y: 10)
             .padding(20)
-            .onTapGesture { }
+        }
+        .background(Color(.systemBackground))
+        .overlay(alignment: .topLeading) {
+            Text("Action A")
+                .font(.caption)
+                .padding(10)
+                .background(.ultraThinMaterial, in: Capsule())
+                .padding(14)
         }
     }
 }
 
 // MARK: - Overlay B
 
-private struct ActionBOverlay: View {
+private struct ActionBScreen: View {
     let event: IncidentEvent
-    let onClose: () -> Void
 
     private let options: [(String, String)] = [
         ("カフェ", "cup.and.saucer"),
@@ -297,47 +294,33 @@ private struct ActionBOverlay: View {
     ]
 
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.38)
-                .ignoresSafeArea()
-                .onTapGesture { onClose() }
+        ScrollView {
+            VStack(spacing: 18) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("周辺で時間を使う")
+                        .font(.title3)
+                        .foregroundStyle(.primary)
 
-            VStack(spacing: 14) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("周辺で時間を使う")
-                            .font(.title3)
-                            .foregroundStyle(.primary)
-
-                        Text("\(event.lineName)（\(event.section)）")
-                            .font(.body)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Spacer()
-
-                    Button("閉じる") { onClose() }
+                    Text("\(event.lineName)（\(event.section)）")
                         .font(.body)
                         .foregroundStyle(.secondary)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                HStack(spacing: 12) {
-                    optionsGrid
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                mockImpactMap(statusColor: event.status.accent)
+                    .frame(height: 240)
 
-                    mockImpactMap(statusColor: event.status.accent)
-                        .frame(width: 220, height: 220)
-                }
+                optionsGrid
             }
-            .padding(16)
-            .frame(maxWidth: 640)
-            .background(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(Color(.systemBackground))
-            )
-            .shadow(color: Color.black.opacity(0.18), radius: 18, x: 0, y: 10)
             .padding(20)
-            .onTapGesture { }
+        }
+        .background(Color(.systemBackground))
+        .overlay(alignment: .topLeading) {
+            Text("Action B")
+                .font(.caption)
+                .padding(10)
+                .background(.ultraThinMaterial, in: Capsule())
+                .padding(14)
         }
     }
 
@@ -391,6 +374,79 @@ private struct ActionBOverlay: View {
             .padding(14)
         }
         .shadow(color: Color.black.opacity(0.06), radius: 10, x: 0, y: 6)
+    }
+}
+
+// MARK: - Full screen pager
+
+private struct FullScreenPager<Content: View>: View {
+    @Binding var mode: OverlayMode?
+    var onPageChange: (OverlayMode) -> Void
+    @ViewBuilder var content: (OverlayMode) -> Content
+
+    var body: some View {
+        Group {
+            if let mode {
+                FullscreenPagingContainer(mode: $mode, onPageChange: onPageChange, content: content)
+                    .transition(.opacity)
+            }
+        }
+    }
+}
+
+private struct FullscreenPagingContainer<Content: View>: View {
+    @Binding var mode: OverlayMode?
+    var onPageChange: (OverlayMode) -> Void
+    @ViewBuilder var content: (OverlayMode) -> Content
+
+    @State private var page: OverlayMode
+
+    init(mode: Binding<OverlayMode?>, onPageChange: @escaping (OverlayMode) -> Void, content: @escaping (OverlayMode) -> Content) {
+        _mode = mode
+        self.onPageChange = onPageChange
+        self.content = content
+        _page = State(initialValue: mode.wrappedValue ?? .actionA(.init(lineName: "", section: "", minutesAgo: 0, status: .caution)))
+    }
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            ScrollView(.vertical) {
+                VStack(spacing: 0) {
+                    content(.actionA(page.event))
+                        .frame(maxHeight: .infinity)
+                        .containerRelativeFrame(.vertical)
+                        .id(OverlayMode.actionA(page.event))
+
+                    content(.actionB(page.event))
+                        .frame(maxHeight: .infinity)
+                        .containerRelativeFrame(.vertical)
+                        .id(OverlayMode.actionB(page.event))
+                }
+            }
+            .scrollIndicators(.hidden)
+            .scrollTargetBehavior(.paging)
+            .scrollPosition(id: $page)
+            .background(Color(.systemBackground).ignoresSafeArea())
+            .onChange(of: page) { newValue in
+                mode = newValue
+                onPageChange(newValue)
+            }
+
+            Button {
+                mode = nil
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title2)
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.secondary)
+                    .padding(10)
+            }
+            .padding(.trailing, 14)
+            .padding(.top, 18)
+        }
+        .onChange(of: mode) { newValue in
+            if let newValue { page = newValue }
+        }
     }
 }
 
